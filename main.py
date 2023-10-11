@@ -1,3 +1,4 @@
+import os
 import sys
 import math
 import random
@@ -136,7 +137,7 @@ def run(dataset, split, model_name, dim_hidden, num_layers, num_hops, num_sample
 
     if dataset in ['Cora', 'CiteSeer', 'PubMed', 'Coauthor_CS', 'Coauthor_Physics', 'County_Facebook', 'Sex', 'Ising+', 'Ising-', 'MRF+', 'MRF-']:
         graph_sampler = FullgraphSampler(num_nodes, x, y, edge_index, edge_weight, edge_rv)
-        max_batch_size = -1
+        max_batch_size = 128
     elif dataset in ['OGBN_arXiv', 'OGBN_Products', 'JPMC_Payment0', 'JPMC_Payment1', 'Elliptic_Bitcoin']:
         if model_name in ['LP', 'MLP', 'SAGE', 'GAT', 'GBPN']:
             graph_sampler = SubtreeSampler(num_nodes, x, y, edge_index, edge_weight, edge_rv)
@@ -234,6 +235,8 @@ def run(dataset, split, model_name, dim_hidden, num_layers, num_hops, num_sample
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=2.5e-4)
 
     def train(num_hops=2, num_samples=5):
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+        print(num_samples, 'num samples')
         model.train()
         total_loss = 0.0
         log_b_list, gth_y_list = [], []
@@ -241,11 +244,12 @@ def run(dataset, split, model_name, dim_hidden, num_layers, num_hops, num_sample
             subgraph_size, subgraph_nodes, subgraph_x, subgraph_y, subgraph_deg, \
             subgraph_edge_index, subgraph_edge_weight, subgraph_edge_rv, _ in graph_sampler.get_generator(mask=train_mask, shuffle=True, max_batch_size=max_batch_size, num_hops=num_hops, num_samples=num_samples, device=device):
 
+            torch.cuda.empty_cache()
             phi = torch.zeros(subgraph_size, num_classes).to(device)
             backpp_mask = torch.ones(batch_size, dtype=torch.bool).to(device)
             if type(model) == GBPN and eval_C:
                 backpp_nodes = batch_nodes[torch.rand(batch_size) > 0.5]
-                anchor_mask = train_mask.clone()
+                anchor_mask = train_mask.clone().to(device)
                 anchor_mask[backpp_nodes] = False
                 phi[anchor_mask[subgraph_nodes]] = torch.log(F.one_hot(subgraph_y[anchor_mask[subgraph_nodes]], num_classes).float())
                 backpp_mask[anchor_mask[batch_nodes]] = False
@@ -370,7 +374,6 @@ if not args.develop:
 
 print(args)
 print()
-
 test_acc = []
 test_deg_avg = []
 test_nll_avg = []
